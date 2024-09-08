@@ -1,4 +1,4 @@
-/* Created by Lucian Chauvin - lucianchauvin@gmail.gov */
+/* Created by Lucian Chauvin - lucianchauvin@gmail.com */
 
 #include "mandel.h"
 /* #include <scorep/SCOREP_User.h> */
