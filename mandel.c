@@ -58,8 +58,8 @@ int main (int argc, char *argv[]){
     clock_t begin, end;
     double time_spent;
 
-    mpfr_t x_center, y_center, x_pix, y_pix, x2, y2, x2y2, x, y, zoom_factor, frame_skip;
-    mpfr_inits2  (precision, x_center, y_center, x_pix, y_pix, x, y, x2, y2, x2y2, zoom_factor, frame_skip, (mpfr_ptr) 0);
+    mpfr_t x_center, y_center, x_pix, y_pix, x_pix_d, y_pix_d, x2, y2, x2y2, x, y, zoom_factor, frame_skip;
+    mpfr_inits2  (precision, x_center, y_center, x_pix, y_pix, x_pix_d, y_pix_d, x, y, x2, y2, x2y2, zoom_factor, frame_skip, (mpfr_ptr) 0);
     mpfr_set_str (x_center, x_center_s, 10, round_mode);
     mpfr_set_str (y_center, y_center_s, 10, round_mode);
     mpfr_set_ui  (frame_skip, frame_skip_init, round_mode);
@@ -192,35 +192,36 @@ int main (int argc, char *argv[]){
         fprintf(fp, "P6\n%d %d\n255\n", (int) rez_width, (int) rez_height);
 
         begin = clock();
+
+        mpfr_set   (x_pix,  bounds[0], round_mode);
+        mpfr_set   (y_pix,  bounds[3], round_mode);
+
+        /* x_pix_d = (bounds[2] - bounds[0])*(i/rez_width); */ 
+        mpfr_sub   (x_pix_d, bounds[2], bounds[0], round_mode);
+        mpfr_mul_d (x_pix_d, x_pix_d, i, round_mode);
+        mpfr_div_d (x_pix_d, x_pix_d, rez_width, round_mode);
+
+        /* y_pix_d = (bounds[1] - bounds[3])*(j/rez_height); */ 
+        mpfr_sub   (y_pix_d, bounds[1], bounds[3], round_mode);
+        mpfr_mul_d (y_pix_d, y_pix_d, j, round_mode);
+        mpfr_div_d (y_pix_d, y_pix_d, rez_height, round_mode);
+
         for (j = 0; j < (int) rez_height; ++j){
+            mpfr_add(y_pix, y_pix, y_pix_d, round_mode);
             for (i = 0; i < (int) rez_width; ++i){   
-                /* x_pix = bounds[0] + (bounds[2] - bounds[0])*(i/rez_width); */ 
-                mpfr_sub   (x_pix, bounds[2], bounds[0], round_mode);
-                mpfr_mul_d (x_pix, x_pix, i, round_mode);
-                mpfr_div_d (x_pix, x_pix, rez_width, round_mode);
-                mpfr_add   (x_pix, x_pix, bounds[0], round_mode);
+                mpfr_add(x_pix, x_pix, x_pix_d, round_mode);
 
-                /* y_pix = bounds[3] + (bounds[1] - bounds[3])*(j/rez_height); */ 
-                mpfr_sub   (y_pix, bounds[1], bounds[3], round_mode);
-                mpfr_mul_d (y_pix, y_pix, j, round_mode);
-                mpfr_div_d (y_pix, y_pix, rez_height, round_mode);
-                mpfr_add   (y_pix, y_pix, bounds[3], round_mode);
-
-                /* x = 0; */
-                mpfr_set_ui (x, 0, round_mode);
-                /* y = 0; */
-                mpfr_set_ui (y, 0, round_mode);
-                /* x2 = 0; */
-                mpfr_set_ui (x2, 0, round_mode);
-                /* y2 = 0; */
-                mpfr_set_ui (y2, 0, round_mode);
-                /* x2y2 = 0; */
-                mpfr_set_ui (x2y2, 0, round_mode);
+                // zero everything
+                mpfr_set_zero (x, 1);
+                mpfr_set_zero (y, 1);
+                mpfr_set_zero (x2, 1);
+                mpfr_set_zero (y2, 1);
+                mpfr_set_zero (x2y2, 1);
 
                 /* SCOREP_USER_REGION_DEFINE(inner_loop); */
                 /* SCOREP_USER_REGION_BEGIN(inner_loop, "test", SCOREP_USER_REGION_TYPE_LOOP); */
 
-                /* x2 + y2 <= 4 */
+                /* x2 + y2 <= escape_radius */
                 escape_i = 0;
                 while (mpfr_cmp_ui(x2y2, escape_radius) <= 0 && escape_i < max_iter){
                     /* y = 2*x*y+yVal; */

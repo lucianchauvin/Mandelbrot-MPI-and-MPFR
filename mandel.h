@@ -9,14 +9,14 @@
 #include <time.h>
 
 #define PARENT                  0           /* rank of the parent node */
-#define rez_width               640.0       /* resolution of the width, enter as float */
-#define rez_height              360.0       /* resolution of the height, enter as float */
+#define rez_width               50.0       /* resolution of the width, enter as float */
+#define rez_height              50.0       /* resolution of the height, enter as float */
 #define x_wid                   4.0         /* inital distance to be space between left and right bound on the real line from the center above, enter as float */
 #define iter_delta              5           /* increase max max_iters by this much each frame */
 #define max_frames              60*4        /* number of frames to generate */
 #define max_iters               200         /* max iterations to run initally */
 #define zoom_init               95.0/100    /* zoom in by one minus this much each frame, enter as float (probably) */
-#define precision               128         /* bits to use for mpfr_t vars */
+#define precision               32          /* bits to use for mpfr_t vars */
 #define round_mode              MPFR_RNDZ   /* mpfr roudning mode */
 #define frame_skip_init         0           /* number of inital frames to skip in rendering */
 #define escape_radius           (1 << 16)   /* escape radius (set as high as you want) */
