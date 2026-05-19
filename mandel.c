@@ -191,75 +191,84 @@ int main (int argc, char *argv[]){
         }
         fprintf(fp, "P6\n%d %d\n255\n", (int) rez_width, (int) rez_height);
 
-        /* x_pix_d = (bounds[2] - bounds[0])/rez_width); */ 
+        /* x_pix_d = (bounds[2] - bounds[0])/rez_width */
         mpfr_sub   (x_pix_d, bounds[2], bounds[0], round_mode);
         mpfr_div_d (x_pix_d, x_pix_d, rez_width, round_mode);
 
-        /* y_pix_d = (bounds[1] - bounds[3])/rez_height); */ 
+        /* y_pix_d = (bounds[1] - bounds[3])/rez_height */
         mpfr_sub   (y_pix_d, bounds[1], bounds[3], round_mode);
         mpfr_div_d (y_pix_d, y_pix_d, rez_height, round_mode);
 
-        mpfr_set (y_pix, bounds[3], round_mode);
+        unsigned char *pixel_buf = malloc(3 * (int)rez_width * (int)rez_height);
+        if (!pixel_buf) { perror("malloc"); MPI_Finalize(); exit(1); }
 
-        begin = clock();
-        for (j = 0; j < (int) rez_height; ++j){
-            mpfr_set (x_pix, bounds[0], round_mode);
-            mpfr_add (y_pix, y_pix, y_pix_d, round_mode);
-            for (i = 0; i < (int) rez_width; ++i){   
-                mpfr_add (x_pix, x_pix, x_pix_d, round_mode);
+        double t_begin = omp_get_wtime();
 
-                // zero everything
-                mpfr_set_zero (x, 1);
-                mpfr_set_zero (y, 1);
-                mpfr_set_zero (x2, 1);
-                mpfr_set_zero (y2, 1);
-                mpfr_set_zero (x2y2, 1);
+        #pragma omp parallel
+        {
+            int li, lj, lescape_i, lcolor_i;
+            color lpix_color;
+            mpfr_t lx, ly, lx2, ly2, lx2y2, lx_pix, ly_pix;
+            mpfr_inits2(precision, lx, ly, lx2, ly2, lx2y2, lx_pix, ly_pix, (mpfr_ptr)0);
 
-                /* SCOREP_USER_REGION_DEFINE(inner_loop); */
-                /* SCOREP_USER_REGION_BEGIN(inner_loop, "test", SCOREP_USER_REGION_TYPE_LOOP); */
+            #pragma omp for schedule(dynamic)
+            for (lj = 0; lj < (int)rez_height; ++lj) {
+                /* ly_pix = bounds[3] + (lj+1)*y_pix_d */
+                mpfr_mul_ui(ly_pix, y_pix_d, (unsigned long)(lj + 1), round_mode);
+                mpfr_add   (ly_pix, ly_pix, bounds[3], round_mode);
 
-                /* x2 + y2 <= escape_radius */
-                escape_i = 0;
-                while (mpfr_cmp_ui(x2y2, escape_radius) <= 0 && escape_i < max_iter){
-                    /* y = 2*x*y+yVal; */
-                    mpfr_mul     (y, y, x, round_mode);
-                    mpfr_mul_2ui (y, y, 1, round_mode);
-                    mpfr_add     (y, y, y_pix, round_mode);
+                for (li = 0; li < (int)rez_width; ++li) {
+                    /* lx_pix = bounds[0] + (li+1)*x_pix_d */
+                    mpfr_mul_ui(lx_pix, x_pix_d, (unsigned long)(li + 1), round_mode);
+                    mpfr_add   (lx_pix, lx_pix, bounds[0], round_mode);
 
-                    /* x = x2-y2+xVal; */
-                    mpfr_sub     (x, x2, y2, round_mode);
-                    mpfr_add     (x, x, x_pix, round_mode);
+                    mpfr_set_zero(lx,    1);
+                    mpfr_set_zero(ly,    1);
+                    mpfr_set_zero(lx2,   1);
+                    mpfr_set_zero(ly2,   1);
+                    mpfr_set_zero(lx2y2, 1);
 
-                    /* x2 = x*x; */
-                    /* y2 = y*y; */
-                    mpfr_sqr     (x2, x, round_mode);
-                    mpfr_sqr     (y2, y, round_mode);
+                    lescape_i = 0;
+                    while (mpfr_cmp_ui(lx2y2, escape_radius) <= 0 && lescape_i < max_iter) {
+                        mpfr_mul    (ly, ly, lx, round_mode);
+                        mpfr_mul_2ui(ly, ly, 1, round_mode);
+                        mpfr_add    (ly, ly, ly_pix, round_mode);
 
-                    /* x2y2 = x2 + y2; */
-                    mpfr_add     (x2y2, x2, y2, round_mode);
+                        mpfr_sub(lx, lx2, ly2, round_mode);
+                        mpfr_add(lx, lx, lx_pix, round_mode);
 
-                    escape_i += 1;
-                } 
-                /* SCOREP_USER_REGION_END(inner_loop); */
-                if(mpfr_cmp_ui(x2y2, 4) <= 0){
-                    (void) fwrite((char []) {0,0,0}, 1, 3, fp);
-                }
-                else{
-                    escape_i += 1; 
-                    mpfr_log2    (x2y2, x2y2, round_mode);
-                    mpfr_div_d   (x2y2, x2y2, 2, round_mode);
-                    mpfr_log2    (x2y2, x2y2, round_mode);
-                    
-                    color_i = ((((int)(sqrt(escape_i + 10 - mpfr_get_d(x2y2, round_mode)) * 256) - current_frame*mov_amnt) % 2048) + 2048) % 2048;
-                    pix_color = colors[color_i];
-                    (void) fwrite((char []){pix_color.r,pix_color.g,pix_color.b}, 1, 3, fp);
+                        mpfr_sqr(lx2, lx, round_mode);
+                        mpfr_sqr(ly2, ly, round_mode);
+
+                        mpfr_add(lx2y2, lx2, ly2, round_mode);
+                        lescape_i += 1;
+                    }
+
+                    unsigned char *pix = &pixel_buf[(lj * (int)rez_width + li) * 3];
+                    if (mpfr_cmp_ui(lx2y2, 4) <= 0) {
+                        pix[0] = pix[1] = pix[2] = 0;
+                    } else {
+                        lescape_i += 1;
+                        mpfr_log2  (lx2y2, lx2y2, round_mode);
+                        mpfr_div_d (lx2y2, lx2y2, 2, round_mode);
+                        mpfr_log2  (lx2y2, lx2y2, round_mode);
+                        lcolor_i = ((((int)(sqrt(lescape_i + 10 - mpfr_get_d(lx2y2, round_mode)) * 256) - current_frame * mov_amnt) % 2048) + 2048) % 2048;
+                        lpix_color = colors[lcolor_i];
+                        pix[0] = lpix_color.r;
+                        pix[1] = lpix_color.g;
+                        pix[2] = lpix_color.b;
+                    }
                 }
             }
+
+            mpfr_clears(lx, ly, lx2, ly2, lx2y2, lx_pix, ly_pix, (mpfr_ptr)0);
         }
+
+        (void) fwrite(pixel_buf, 1, 3 * (int)rez_width * (int)rez_height, fp);
+        free(pixel_buf);
         (void) fclose(fp);
-        end = clock();
-        time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
-        printf("frame %d took %f seconds\n", current_frame, time_spent);
+        printf("frame %d took %f seconds (%d threads)\n", current_frame,
+               omp_get_wtime() - t_begin, omp_get_max_threads());
 
         /* tell the parent I'm ready for more work */
         MPI_Send(&rank, 1, MPI_INT, PARENT, 0, MPI_COMM_WORLD);

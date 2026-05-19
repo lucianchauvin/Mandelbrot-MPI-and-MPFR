@@ -1,8 +1,8 @@
 mandelmake: mandel.c
-	mpicc -Ofast -g -L/usr/local/lib -L/usr/lib -o mandel.out mandel.c -Wno-incompatible-pointer-types -Wno-int-conversion -Wreturn-mismatch -lmpfr -lgmp -lm
+	mpicc -Ofast -g -fopenmp -L/usr/local/lib -L/usr/lib -o mandel.out mandel.c -Wno-incompatible-pointer-types -Wno-int-conversion -Wreturn-mismatch -lmpfr -lgmp -lm
 
-scorep: 
-	scorep mpicc -Ofast -g -L/usr/local/lib -L/usr/lib -o mandel.out mandel.c -Wno-incompatible-pointer-types -Wno-int-conversion -Wreturn-mismatch -lmpfr -lgmp -lm
+scorep:
+	scorep mpicc -Ofast -g -fopenmp -L/usr/local/lib -L/usr/lib -o mandel.out mandel.c -Wno-incompatible-pointer-types -Wno-int-conversion -Wreturn-mismatch -lmpfr -lgmp -lm
 
 rebuild: clean all
 

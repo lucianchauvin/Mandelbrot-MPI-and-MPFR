@@ -7,6 +7,7 @@
 #include <mpfr.h>
 #include <math.h>
 #include <time.h>
+#include <omp.h>
 
 #define PARENT                  0           /* rank of the parent node */
 #define rez_width               640.0       /* resolution of the width, enter as float */
