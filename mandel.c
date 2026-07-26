@@ -1,184 +1,136 @@
-/* Created by Lucian Chauvin - lucianchauvin@gmail.com */
+// Created by Lucian Chauvin - me@lucianchauvin.com
 
 #include "mandel.h"
-/* #include <scorep/SCOREP_User.h> */
 
 void print_mpfr(mpfr_t op){
-        mpfr_out_str (stdout, 10, 0, op, MPFR_RNDD);
+        mpfr_out_str(stdout, 10, 0, op, MPFR_RNDD);
         putchar('\n');
 }
 
-void print_bounds(mpfr_t bounds [], char * s){
+void print_bounds(mpfr_t bounds [], char* s){
     for(int i = 0; i < 4; ++i){
         printf("%s %d: ", s, i);
         print_mpfr(bounds[i]);
     }
 }
 
-/* Genearte a color map from list of control colors via lerp (should update to cubic-erp */
-void generate_colors(color* ctl_colors, size_t ctl_size, color* buf, size_t size){
+// genearte a color map from list of control colors via lerp (should update to cubic-lerp)
+void generate_colors(color* colors, size_t ctl_size, color* buf, size_t size){
     int cur_color = 0;
     int block_size = (double) size / (ctl_size - 1);
     for (int c = 0; c < size; c++){
         if(c % block_size == 0 && c != 0) cur_color += 1;
-        buf[c] = (color) {(int) (ctl_colors[cur_color].r + (((double) (c%block_size))/block_size)*(ctl_colors[cur_color+1].r - ctl_colors[cur_color].r)),
-                          (int) (ctl_colors[cur_color].g + (((double) (c%block_size))/block_size)*(ctl_colors[cur_color+1].g - ctl_colors[cur_color].g)),
-                          (int) (ctl_colors[cur_color].b + (((double) (c%block_size))/block_size)*(ctl_colors[cur_color+1].b - ctl_colors[cur_color].b))};
+        buf[c] = (color) {(int) (colors[cur_color].r + (((double) (c%block_size))/block_size)*(colors[cur_color+1].r - colors[cur_color].r)),
+                          (int) (colors[cur_color].g + (((double) (c%block_size))/block_size)*(colors[cur_color+1].g - colors[cur_color].g)),
+                          (int) (colors[cur_color].b + (((double) (c%block_size))/block_size)*(colors[cur_color+1].b - colors[cur_color].b))};
     }
 }
 
 int main (int argc, char *argv[]){
-    int   n_tasks,               /* total number of tasks in partition */
-          rank,                  /* task identifier */
-          escape_i,
-          current_frame,
-          requestor_rank,
-          color_i,
-          packed_msg_s,
-          compute_state   = 0,
-          pack_buffer_pos = 0,
-          i               = 0,
-          j               = 0,
-          max_iter        = max_iters;
-
-    FILE* stream;
-
-    char * pack_stream_buffer   = NULL;
-    size_t pack_stream_buffer_s = 0;
-
-    char unpack_stream_buffer [1000];
-    char pack_buffer [1000];
-
-    color pix_color;
+    int current_frame = 0;
 
     color colors [2048];
-    generate_colors(blue_gold_ctls, 5, colors, 2048);
+    generate_colors(blue_gold, 5, colors, 2048);
 
-    time_t seconds;
-    clock_t begin, end;
-    double time_spent;
-
-    mpfr_t x_center, y_center, x_pix, y_pix, x_pix_d, y_pix_d, x2, y2, x2y2, x, y, zoom_factor, frame_skip;
-    mpfr_inits2  (precision, x_center, y_center, x_pix, y_pix, x_pix_d, y_pix_d, x, y, x2, y2, x2y2, zoom_factor, frame_skip, (mpfr_ptr) 0);
-    mpfr_set_str (x_center, x_center_s, 10, round_mode);
-    mpfr_set_str (y_center, y_center_s, 10, round_mode);
-    mpfr_set_ui  (frame_skip, frame_skip_init, round_mode);
-    mpfr_set_d   (zoom_factor, zoom_init, round_mode);
-
-    MPI_Init(&argc,&argv);
+    mpfr_t center_x, center_y, delta_x, delta_y, factor, skip;
+    mpfr_inits2  (PRECISION, center_x, center_y, delta_x, delta_y, factor, skip, NULL);
+    mpfr_set_str (center_x, center_x_str, 10, ROUND);
+    mpfr_set_str (center_y, center_y_str, 10, ROUND);
+    mpfr_set_ui  (skip, SKIP, ROUND);
+    mpfr_set_d   (factor, FACTOR, ROUND);
 
     mpfr_t bounds [4];
-    for(i = 0; i < 4; ++i){
+    for(int i = 0; i < 4; ++i){
         mpfr_set_zero(bounds[i], 1);
-        mpfr_init2(bounds[i], precision);
+        mpfr_init2(bounds[i], PRECISION);
     }
 
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &n_tasks);
+    mpfr_t w,h;
+    mpfr_inits2  (PRECISION, w, h, (mpfr_ptr) 0);
 
-    if(n_tasks == 1){
-        printf("Please give me more than one process so I can work :3\n");
-        MPI_Finalize();
-        exit(0);
+    mpfr_set_d   (w, REAL_OFFSET, ROUND);
+    mpfr_set_d   (h, REAL_OFFSET*(HEIGHT/WIDTH), ROUND);
+
+    if(SKIP > 0){
+        printf("Skipping %d frames\n", SKIP);
+        mpfr_pow (factor, factor, skip, ROUND);
+        mpfr_mul (w, w, factor, ROUND);
+        mpfr_mul (h, h, factor, ROUND);
     }
 
-    MPI_Status status;
-    if(rank == PARENT){
-        compute_state = 0;
-        current_frame = 1;
+    while(current_frame <= MAX_FRAMES){
+        mpfr_sub (bounds[0], center_x, w, ROUND); // left
+        mpfr_add (bounds[1], center_y, h, ROUND); // top
+        mpfr_add (bounds[2], center_x, w, ROUND); // right
+        mpfr_sub (bounds[3], center_y, h, ROUND); // bottom
 
-        mpfr_t w,h;
-        mpfr_inits2  (precision, w, h, (mpfr_ptr) 0);
+        // x_delta = (bounds[2] - bounds[0])/WIDTH 
+        mpfr_sub   (delta_x, bounds[2], bounds[0], ROUND);
+        mpfr_div_d (delta_x, delta_x, WIDTH, ROUND);
 
-        /* w = x_wid/2; */
-        mpfr_set_d   (w, x_wid, round_mode);
-        mpfr_div_2ui (w, w, 1, round_mode);
+        // y_delta = (bounds[1] - bounds[3])/HEIGHT 
+        mpfr_sub   (delta_y, bounds[1], bounds[3], ROUND);
+        mpfr_div_d (delta_y, delta_y, HEIGHT, ROUND);
 
-        /* h = x_wid*(rez_height/rez_width)/2; */
-        mpfr_set_d   (h, rez_height, round_mode);
-        mpfr_div_d   (h, h, rez_width, round_mode);
-        mpfr_div_2ui (h, h, 1, round_mode);
-        mpfr_mul_d   (h, h, x_wid, round_mode);
-        if(frame_skip_init){
-            printf("Skipping %d frames\n", frame_skip_init);
-            mpfr_pow (zoom_factor, zoom_factor, frame_skip, round_mode);
-            mpfr_mul (w, w, zoom_factor, round_mode);
-            mpfr_mul (h, h, zoom_factor, round_mode);
-            max_iter += frame_skip_init*iter_delta;
-        }
+        unsigned char* dat = malloc(3 * WIDTH * HEIGHT);
+        if (!dat) { perror("malloc"); exit(1); }
 
-        while(current_frame <= max_frames){
-            MPI_Recv(&requestor_rank, 1, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
-            MPI_Send(&compute_state,  1, MPI_INT, requestor_rank, 0, MPI_COMM_WORLD);
+        double start = omp_get_wtime();
 
-            mpfr_sub (bounds[0], x_center, w, round_mode);
-            mpfr_add (bounds[1], y_center, h, round_mode);
-            mpfr_add (bounds[2], x_center, w, round_mode);
-            mpfr_sub (bounds[3], y_center, h, round_mode);
+        #pragma omp parallel
+        {
+            mpfr_t Z_x, Z_y, x2, y2, dist, C_x, C_y;
+            mpfr_inits2(PRECISION, Z_x, Z_y, x2, y2, dist, C_x, C_y, NULL);
 
-            pack_stream_buffer = NULL;
-            pack_stream_buffer_s = 0;
-            pack_buffer_pos = 0;
-            MPI_Pack(&current_frame, 1, MPI_INT, pack_buffer, 1000, &pack_buffer_pos, MPI_COMM_WORLD);
-            MPI_Pack(&max_iter,      1, MPI_INT, pack_buffer, 1000, &pack_buffer_pos, MPI_COMM_WORLD);
+            #pragma omp for schedule(dynamic)
+            for (int v = 0; v < (int)HEIGHT; ++v) {
+                // C_y = bounds[3] + (v+1)*y_delta 
+                mpfr_mul_ui(C_y, delta_y, (unsigned long)(v + 1), ROUND);
+                mpfr_add   (C_y, C_y, bounds[3], ROUND);
 
-            stream = open_memstream(&pack_stream_buffer, &pack_stream_buffer_s); 
-            if (stream == NULL) {
-                 perror("open_memstream");
-                 MPI_Finalize();
-                 exit(1);
+                for (int u = 0; u < (int)WIDTH; ++u) {
+                    // C_x = bounds[0] + (u+1)*x_delta 
+                    mpfr_mul_ui(C_x, delta_x, (unsigned long)(u + 1), ROUND);
+                    mpfr_add   (C_x, C_x, bounds[0], ROUND);
+
+                    mpfr_set_zero(Z_x,    1);
+                    mpfr_set_zero(Z_y,    1);
+                    mpfr_set_zero(x2,   1);
+                    mpfr_set_zero(y2,   1);
+                    mpfr_set_zero(dist, 1);
+
+                    int iters;
+                    for(iters = 0; mpfr_cmp_ui(dist, ESCAPE) <= 0 && iters < MAX_ITERS; ++iters) {
+                        mpfr_mul    (Z_y, Z_y, Z_x, ROUND);
+                        mpfr_mul_2ui(Z_y, Z_y, 1, ROUND);
+                        mpfr_add    (Z_y, Z_y, C_y, ROUND);
+
+                        mpfr_sub(Z_x, x2, y2, ROUND);
+                        mpfr_add(Z_x, Z_x, C_x, ROUND);
+
+                        mpfr_sqr(x2, Z_x, ROUND);
+                        mpfr_sqr(y2, Z_y, ROUND);
+
+                        mpfr_add(dist, x2, y2, ROUND);
+                    }
+
+                    unsigned char* pix = &dat[(v * (int)WIDTH + u) * 3];
+                    if (mpfr_cmp_ui(dist, 4) <= 0) {
+                        pix[0] = pix[1] = pix[2] = 0;
+                    } else {
+                        // iters += 1; ?? why is this here
+                        mpfr_log2  (dist, dist, ROUND);
+                        mpfr_div_d (dist, dist, 2, ROUND);
+                        mpfr_log2  (dist, dist, ROUND);
+                        int color_idx = ((((int)(sqrt(iters + 10 - mpfr_get_d(dist, ROUND)) * 256) - current_frame * MOV) % 2048) + 2048) % 2048;
+                        color c = colors[color_idx];
+                        pix[0] = c.r; pix[1] = c.g; pix[2] = c.b;
+                    }
+                }
             }
 
-            for(i = 0; i < 4; ++i)
-                mpfr_fpif_export(stream, bounds[i]);
-
-            fclose(stream);
-            MPI_Pack (pack_stream_buffer, pack_stream_buffer_s, MPI_BYTE, pack_buffer, 1000, &pack_buffer_pos, MPI_COMM_WORLD);
-
-            MPI_Send (pack_buffer, pack_buffer_pos, MPI_PACKED, requestor_rank, 0, MPI_COMM_WORLD);
-            free(pack_stream_buffer);
-
-            current_frame += 1;
-            max_iter += iter_delta;
-            
-            mpfr_mul (w, w, zoom_factor, round_mode);
-            mpfr_mul (h, h, zoom_factor, round_mode);
+            mpfr_clears(Z_x, Z_y, x2, y2, dist, C_x, C_y, NULL);
         }
-
-        compute_state = 1;
-        for(i = 1; i < n_tasks; ++i){
-            MPI_Recv (&requestor_rank, 1, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
-            MPI_Send (&compute_state,  1, MPI_INT, i, 0, MPI_COMM_WORLD);
-        }
-        //MPI_Bcast(&statusCode, 1, MPI_INT, PARENT, MPI_COMM_WORLD);    why doesnt this work?
-        printf("Killing master\n");
-        MPI_Finalize();
-        exit(0);
-    }
-
-    /* Workers */
-    MPI_Send(&rank, 1, MPI_INT, PARENT, 0, MPI_COMM_WORLD);
-    MPI_Recv(&compute_state, 1, MPI_INT, PARENT, 0, MPI_COMM_WORLD, &status);
-
-    /* keep looping until the parent tells me to die */
-    while(!compute_state){
-        pack_buffer_pos = 0;
-        packed_msg_s = 0;
-
-        MPI_Recv      (pack_buffer, 1000, MPI_PACKED, PARENT, 0, MPI_COMM_WORLD, &status);
-        MPI_Get_count (&status, MPI_BYTE, &packed_msg_s);
-        MPI_Unpack    (pack_buffer, 1000, &pack_buffer_pos, &current_frame, 1, MPI_INT, MPI_COMM_WORLD);
-        MPI_Unpack    (pack_buffer, 1000, &pack_buffer_pos, &max_iter, 1, MPI_INT, MPI_COMM_WORLD);
-        printf("Worker %d recived frame %d\n", rank, current_frame);
-
-        MPI_Unpack    (pack_buffer, 1000, &pack_buffer_pos, unpack_stream_buffer, packed_msg_s - pack_buffer_pos, MPI_BYTE, MPI_COMM_WORLD);
-        stream = fmemopen(unpack_stream_buffer, 1000, "r");
-        for(i = 0; i < 4; ++i){
-            mpfr_fpif_import(bounds[i], stream);
-        }
-        fclose(stream);
-
-        print_bounds(bounds, "r");
 
         char fname[100];
         sprintf(fname, "./frames/%d.ppm", current_frame);
@@ -186,96 +138,23 @@ int main (int argc, char *argv[]){
         FILE *fp = fopen(fname, "wb");
         if(fp == NULL){
             printf("failed writing to frames directory");
-            MPI_Finalize();
             exit(1);
         }
-        fprintf(fp, "P6\n%d %d\n255\n", (int) rez_width, (int) rez_height);
 
-        /* x_pix_d = (bounds[2] - bounds[0])/rez_width */
-        mpfr_sub   (x_pix_d, bounds[2], bounds[0], round_mode);
-        mpfr_div_d (x_pix_d, x_pix_d, rez_width, round_mode);
+        fprintf(fp, "P6\n%d %d\n255\n", (int) WIDTH, (int) HEIGHT);
 
-        /* y_pix_d = (bounds[1] - bounds[3])/rez_height */
-        mpfr_sub   (y_pix_d, bounds[1], bounds[3], round_mode);
-        mpfr_div_d (y_pix_d, y_pix_d, rez_height, round_mode);
-
-        unsigned char *pixel_buf = malloc(3 * (int)rez_width * (int)rez_height);
-        if (!pixel_buf) { perror("malloc"); MPI_Finalize(); exit(1); }
-
-        double t_begin = omp_get_wtime();
-
-        #pragma omp parallel
-        {
-            int li, lj, lescape_i, lcolor_i;
-            color lpix_color;
-            mpfr_t lx, ly, lx2, ly2, lx2y2, lx_pix, ly_pix;
-            mpfr_inits2(precision, lx, ly, lx2, ly2, lx2y2, lx_pix, ly_pix, (mpfr_ptr)0);
-
-            #pragma omp for schedule(dynamic)
-            for (lj = 0; lj < (int)rez_height; ++lj) {
-                /* ly_pix = bounds[3] + (lj+1)*y_pix_d */
-                mpfr_mul_ui(ly_pix, y_pix_d, (unsigned long)(lj + 1), round_mode);
-                mpfr_add   (ly_pix, ly_pix, bounds[3], round_mode);
-
-                for (li = 0; li < (int)rez_width; ++li) {
-                    /* lx_pix = bounds[0] + (li+1)*x_pix_d */
-                    mpfr_mul_ui(lx_pix, x_pix_d, (unsigned long)(li + 1), round_mode);
-                    mpfr_add   (lx_pix, lx_pix, bounds[0], round_mode);
-
-                    mpfr_set_zero(lx,    1);
-                    mpfr_set_zero(ly,    1);
-                    mpfr_set_zero(lx2,   1);
-                    mpfr_set_zero(ly2,   1);
-                    mpfr_set_zero(lx2y2, 1);
-
-                    lescape_i = 0;
-                    while (mpfr_cmp_ui(lx2y2, escape_radius) <= 0 && lescape_i < max_iter) {
-                        mpfr_mul    (ly, ly, lx, round_mode);
-                        mpfr_mul_2ui(ly, ly, 1, round_mode);
-                        mpfr_add    (ly, ly, ly_pix, round_mode);
-
-                        mpfr_sub(lx, lx2, ly2, round_mode);
-                        mpfr_add(lx, lx, lx_pix, round_mode);
-
-                        mpfr_sqr(lx2, lx, round_mode);
-                        mpfr_sqr(ly2, ly, round_mode);
-
-                        mpfr_add(lx2y2, lx2, ly2, round_mode);
-                        lescape_i += 1;
-                    }
-
-                    unsigned char *pix = &pixel_buf[(lj * (int)rez_width + li) * 3];
-                    if (mpfr_cmp_ui(lx2y2, 4) <= 0) {
-                        pix[0] = pix[1] = pix[2] = 0;
-                    } else {
-                        lescape_i += 1;
-                        mpfr_log2  (lx2y2, lx2y2, round_mode);
-                        mpfr_div_d (lx2y2, lx2y2, 2, round_mode);
-                        mpfr_log2  (lx2y2, lx2y2, round_mode);
-                        lcolor_i = ((((int)(sqrt(lescape_i + 10 - mpfr_get_d(lx2y2, round_mode)) * 256) - current_frame * mov_amnt) % 2048) + 2048) % 2048;
-                        lpix_color = colors[lcolor_i];
-                        pix[0] = lpix_color.r;
-                        pix[1] = lpix_color.g;
-                        pix[2] = lpix_color.b;
-                    }
-                }
-            }
-
-            mpfr_clears(lx, ly, lx2, ly2, lx2y2, lx_pix, ly_pix, (mpfr_ptr)0);
-        }
-
-        (void) fwrite(pixel_buf, 1, 3 * (int)rez_width * (int)rez_height, fp);
-        free(pixel_buf);
+        (void) fwrite(dat, 1, 3 * (int)WIDTH * (int)HEIGHT, fp);
+        free(dat);
         (void) fclose(fp);
-        printf("frame %d took %f seconds (%d threads)\n", current_frame,
-               omp_get_wtime() - t_begin, omp_get_max_threads());
 
-        /* tell the parent I'm ready for more work */
-        MPI_Send(&rank, 1, MPI_INT, PARENT, 0, MPI_COMM_WORLD);
-        MPI_Recv(&compute_state, 1, MPI_INT, PARENT, 0, MPI_COMM_WORLD, &status);
+        printf("frame %d took %f seconds (%d threads)\n", 
+               current_frame, 
+               omp_get_wtime() - start, 
+               omp_get_max_threads());
+
+        // update zoom
+        current_frame += 1;
+        mpfr_mul (w, w, factor, ROUND);
+        mpfr_mul (h, h, factor, ROUND);
     }
-
-    printf("Worker recived kill code, killing\n");
-    MPI_Finalize();
-    exit(0);
 }
